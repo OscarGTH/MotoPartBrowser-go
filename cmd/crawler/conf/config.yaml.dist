@@ -1,0 +1,7 @@
+---
+  crawl_categories:
+    moped: <LINK TO MOPED LIST>
+    motorcycle: <LINK TO MOTORCYCLE LIST>
+    snowmobile: <LINK TO SNOWMOBILE LIST>
+  database:
+    connection_string: 

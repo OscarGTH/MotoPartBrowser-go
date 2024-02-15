@@ -5,40 +5,40 @@ import (
 	"Crawler/internal/models"
 	"encoding/json"
 	"fmt"
-	"github.com/gocolly/colly/v2"
 	"log"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gocolly/colly/v2"
+	"github.com/spf13/viper"
 )
 
 const BrandReMatcher = "^[\\w-]+"
 
-func main() {
-	log.Println("Starting crawling.")
-	fName := "../../output/vehicles.json"
-	file, err := os.Create(fName)
-	if err != nil {
-		log.Fatalf("Cannot create file %q: %s\n", fName, err)
-		return
+// Reads application configuration.
+func readConfig() {
+	log.Println("Reading configuration.")
+	viper.SetConfigName("config") // name of config file (without extension)
+	viper.SetConfigType("yaml")   // REQUIRED if the config file does not have the extension in the name
+	viper.AddConfigPath("./conf") // path to look for the config file in
+	err := viper.ReadInConfig()   // Find and read the config file
+	if err != nil {               // Handle errors reading the config file
+		panic(fmt.Errorf("fatal error config file: %w", err))
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			log.Fatalf("Cannot close the file. Reason: %s\n", err)
-			return
-		}
-	}(file)
+}
 
+// Instantiates a Colly collector and configures it.
+func createCollector() (*colly.Collector, error) {
 	// Instantiate default collector
 	c := colly.NewCollector(
 		colly.AllowedDomains("purkuosat.net", "www.purkuosat.net"),
 		colly.AllowURLRevisit(),
 	)
 
-	err = c.Limit(&colly.LimitRule{
+	err := c.Limit(&colly.LimitRule{
 		DomainGlob:  "*purkuosat.*",
 		Parallelism: 10,
 		Delay:       50 * time.Millisecond,
@@ -46,9 +46,12 @@ func main() {
 	})
 	if err != nil {
 		log.Fatalf("Cannot set limit rule. Reason: %s\n", err)
-		return
+		return nil, err
 	}
+	return c, nil
+}
 
+func configureDefaultHandlers(c *colly.Collector) {
 	// Set Fake User Agent and log visited URLs
 	c.OnRequest(func(r *colly.Request) {
 		r.Headers.Set("User-Agent", "1 Mozilla/5.0 (iPad; CPU OS 12_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148")
@@ -58,6 +61,12 @@ func main() {
 	c.OnResponse(func(r *colly.Response) {
 		log.Println("Response received", r.StatusCode)
 	})
+}
+
+func main() {
+	readConfig()
+	c, _ := createCollector()
+	configureDefaultHandlers(c)
 
 	var vehicles []models.RawVehicle
 
@@ -112,37 +121,59 @@ func main() {
 		}
 	})
 
-	err = c.Visit("https://www.purkuosat.net/mopolista.htm")
-	if err != nil {
-		log.Fatalf("Cannot visit the page. Reason: %s\n", err)
-		return
+	// Retrieve the map of vehicle categories that should be crawled.
+	categories := viper.GetStringMapString("crawl_categories")
+
+	// Iterate over the subMap
+	for category, listingPageUrl := range categories {
+
+		fName := "../../output/" + category + "_vehicles.json"
+		file, err := os.Create(fName)
+		if err != nil {
+			log.Fatalf("Cannot create file %q: %s\n", fName, err)
+			return
+		}
+		defer func(file *os.File) {
+			err := file.Close()
+			if err != nil {
+				log.Fatalf("Cannot close the file. Reason: %s\n", err)
+				return
+			}
+		}(file)
+
+		err = c.Visit(listingPageUrl)
+		if err != nil {
+			log.Fatalf("Cannot visit the page %s. Reason: %s\n", listingPageUrl, err)
+			return
+		}
+
+		// Wait until all threads have finished.
+		c.Wait()
+
+		enc := json.NewEncoder(file)
+		enc.SetIndent("", "  ")
+
+		// Convert raw vehicles to vehicles
+		processedVehicles := convertRawVehiclesToVehicles(vehicles, category)
+		// Dump json to the standard output
+		enc.Encode(processedVehicles)
+		log.Printf("Successfully dumped json to the file %s.", file.Name())
 	}
 
-	// Wait until all threads have finished.
-	c.Wait()
-
-	enc := json.NewEncoder(file)
-	enc.SetIndent("", "  ")
-
-	// Convert raw vehicles to vehicles
-	processedVehicles := convertRawVehiclesToVehicles(vehicles)
-	// Dump json to the standard output
-	enc.Encode(processedVehicles)
-	log.Printf("Successfully dumped json to the file %s.", file.Name())
 }
 
 // convertRawVehiclesToVehicles converts raw vehicle data to processed vehicle data
-func convertRawVehiclesToVehicles(rawVehicles []models.RawVehicle) []models.Vehicle {
+func convertRawVehiclesToVehicles(rawVehicles []models.RawVehicle, category string) []models.Vehicle {
 	log.Printf("Converting %d raw vehicles to vehicles", len(rawVehicles))
 	var vehicles []models.Vehicle
 	for _, rawVehicle := range rawVehicles {
-		vehicles = append(vehicles, processRawVehicle(rawVehicle))
+		vehicles = append(vehicles, processRawVehicle(rawVehicle, category))
 	}
 	return vehicles
 }
 
 // processVehicleData processes the raw vehicle data and returns a vehicle struct
-func processRawVehicle(rawVehicle models.RawVehicle) models.Vehicle {
+func processRawVehicle(rawVehicle models.RawVehicle, category string) models.Vehicle {
 	// Instantiate a new vehicle and parts list for it.
 	var vehicle models.Vehicle
 	var parts []models.Part
@@ -152,6 +183,7 @@ func processRawVehicle(rawVehicle models.RawVehicle) models.Vehicle {
 	vehicle.Year = extractYear(vehicle.Name)
 	vehicle.Brand = extractBrand(vehicle.Name, BrandReMatcher)
 	vehicle.Model = extractModel(vehicle.Name)
+	vehicle.VehicleType = category
 
 	for _, part := range rawVehicle.RawParts {
 		// Parsing price from string to float64
