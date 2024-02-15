@@ -73,8 +73,6 @@ func configureDefaultHandlers(c *colly.Collector) {
 
 func main() {
 	readConfig()
-	// Perform crawling based on config.
-	// Sometimes only database transfer is needed from the JSON files.
 	c, _ := createCollector()
 	configureDefaultHandlers(c)
 	dbHandler := createDatabaseHandler()
