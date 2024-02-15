@@ -3,20 +3,28 @@ package main
 import (
 	"Crawler/internal/data"
 	"Crawler/internal/models"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gocolly/colly/v2"
+	"github.com/google/uuid"
+	_ "github.com/lib/pq"
 	"github.com/spf13/viper"
 )
 
 const BrandReMatcher = "^[\\w-]+"
+
+type PSQLHandler struct {
+	DB *sql.DB
+}
 
 // Reads application configuration.
 func readConfig() {
@@ -65,8 +73,11 @@ func configureDefaultHandlers(c *colly.Collector) {
 
 func main() {
 	readConfig()
+	// Perform crawling based on config.
+	// Sometimes only database transfer is needed from the JSON files.
 	c, _ := createCollector()
 	configureDefaultHandlers(c)
+	dbHandler := createDatabaseHandler()
 
 	var vehicles []models.RawVehicle
 
@@ -124,10 +135,11 @@ func main() {
 	// Retrieve the map of vehicle categories that should be crawled.
 	categories := viper.GetStringMapString("crawl_categories")
 
-	// Iterate over the subMap
+	// Iterate over the vehicle categories.
 	for category, listingPageUrl := range categories {
-
-		fName := "../../output/" + category + "_vehicles.json"
+		// Emptying vehicles slice when switching categories.
+		vehicles = nil
+		fName := "./output/" + category + "_data.json"
 		file, err := os.Create(fName)
 		if err != nil {
 			log.Fatalf("Cannot create file %q: %s\n", fName, err)
@@ -158,8 +170,10 @@ func main() {
 		// Dump json to the standard output
 		enc.Encode(processedVehicles)
 		log.Printf("Successfully dumped json to the file %s.", file.Name())
-	}
 
+		// Write the vehicles to the database.
+		transferVehiclesToDatabase(dbHandler, processedVehicles)
+	}
 }
 
 // convertRawVehiclesToVehicles converts raw vehicle data to processed vehicle data
@@ -184,6 +198,8 @@ func processRawVehicle(rawVehicle models.RawVehicle, category string) models.Veh
 	vehicle.Brand = extractBrand(vehicle.Name, BrandReMatcher)
 	vehicle.Model = extractModel(vehicle.Name)
 	vehicle.VehicleType = category
+	// TODO: Fix this, the identifier should not collide but it should not be random either.
+	vehicle.Identifier = extractVehicleIdentifier(vehicle.Url) + "-" + uuid.New().String()
 
 	for _, part := range rawVehicle.RawParts {
 		// Parsing price from string to float64
@@ -305,5 +321,57 @@ func extractModel(s string) string {
 	} else {
 		// If year does not exist, trim out the brand and take the rest of the string
 		return strings.TrimSpace(s[brandIndex+len(brand):])
+	}
+}
+
+// extractVehicleIdentifier extracts the identifier from the URL string
+func extractVehicleIdentifier(s string) string {
+	// Extract the filename from the URL
+	filename := path.Base(s)
+
+	// Remove the file extension
+	vehicleIdentifier := strings.TrimSuffix(filename, path.Ext(filename))
+
+	return vehicleIdentifier
+}
+
+// createDatabaseHandler connects to PostgreSQL database and returns the handler.
+func createDatabaseHandler() *PSQLHandler {
+	// Connect to the PostgreSQL database
+	db, err := sql.Open("postgres", viper.GetString("database.connection_string"))
+	if err != nil {
+		panic(err)
+	}
+
+	// Verify the connection by pinging the database
+	err = db.Ping()
+	if err != nil {
+		panic(err)
+	}
+	log.Println("Successfully connected to PostgreSQL!")
+	return &PSQLHandler{DB: db}
+}
+
+func (handler *PSQLHandler) Insert(vehicle *models.Vehicle) error {
+	// TODO: Optimise this.
+	_, err := handler.DB.Exec("INSERT INTO Vehicles (vehicle_type, brand_name, model_name, listing_url, vehicle_id, year) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT ON CONSTRAINT unique_vehicle DO NOTHING;",
+		vehicle.VehicleType, vehicle.Brand, vehicle.Model, vehicle.Url, vehicle.Identifier, vehicle.Year)
+	return err
+}
+
+// transferVehiclesToDatabase writes the contents of the parsed vehicles and their parts there.
+func transferVehiclesToDatabase(handler *PSQLHandler, vehicles []models.Vehicle) {
+	// Verify the connection by pinging the database
+	err := handler.DB.Ping()
+	if err != nil {
+		panic(err)
+	}
+	// Close connection after everything has been sent to database.
+	defer handler.DB.Close()
+	for _, vehicle := range vehicles {
+		err := handler.Insert(&vehicle)
+		if err != nil {
+			log.Fatalf("failed to insert to database %s", err)
+		}
 	}
 }

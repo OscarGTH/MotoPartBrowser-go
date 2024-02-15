@@ -5,6 +5,7 @@ type Vehicle struct {
 	Brand       string
 	Model       string
 	VehicleType string
+	Identifier  string
 	Year        int
 	Url         string
 	Parts       []Part

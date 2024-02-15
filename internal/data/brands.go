@@ -8,6 +8,7 @@ var Brands = []string{
 	"Benelli",
 	"Beta",
 	"Bimota",
+	"MBK",
 	"Buell",
 	"Cagiva",
 	"Can Am",

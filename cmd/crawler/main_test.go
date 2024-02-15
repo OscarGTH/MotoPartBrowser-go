@@ -74,3 +74,23 @@ func Test_extractModel(t *testing.T) {
 		})
 	}
 }
+
+func Test_extractVehicleIdentifier(t *testing.T) {
+	type args struct {
+		s string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"Test normal link", args{"https://www.purkuosat.net/apriliamx12504.htm"}, "apriliamx12504"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractVehicleIdentifier(tt.args.s); got != tt.want {
+				t.Errorf("extractVehicleIdentifier() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
