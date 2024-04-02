@@ -6,16 +6,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"os"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gocolly/colly/v2"
-	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/spf13/viper"
 )
@@ -169,7 +168,7 @@ func main() {
 		enc.Encode(processedVehicles)
 		log.Printf("Successfully dumped json to the file %s.", file.Name())
 
-		// Write the vehicles to the database.
+		// Write the vehicles and parts to the database.
 		transferVehiclesToDatabase(dbHandler, processedVehicles)
 	}
 }
@@ -196,8 +195,7 @@ func processRawVehicle(rawVehicle models.RawVehicle, category string) models.Veh
 	vehicle.Brand = extractBrand(vehicle.Name, BrandReMatcher)
 	vehicle.Model = extractModel(vehicle.Name)
 	vehicle.VehicleType = category
-	// TODO: Fix this, the identifier should not collide but it should not be random either.
-	vehicle.Identifier = extractVehicleIdentifier(vehicle.Url) + "-" + uuid.New().String()
+	vehicle.Identifier = generateHash(vehicle.Url, vehicle.Name)
 
 	for _, part := range rawVehicle.RawParts {
 		// Parsing price from string to float64
@@ -209,7 +207,7 @@ func processRawVehicle(rawVehicle models.RawVehicle, category string) models.Veh
 		newPart := models.Part{
 			Name:           standardizeSpaces(part.Name),
 			Description:    standardizeSpaces(part.Description),
-			PartIdentifier: standardizeSpaces(part.PartIdentifier),
+			PartIdentifier: generateHash(part.PartIdentifier, vehicle.Name),
 			Price:          price,
 			ImgUrl:         part.ImgUrl,
 			ImgThumbUrl:    part.ImgThumbUrl,
@@ -226,7 +224,7 @@ func standardizeSpaces(s string) string {
 }
 
 func parsePrice(price string) (float64, error) {
-	// Define a regular expression to match a sequence of digits optionally followed by a decimal point and more digits
+	// regular expression to match a sequence of digits optionally followed by a decimal point and more digits
 	re := regexp.MustCompile(`(\d+\.\d+|\d+)`)
 	matches := re.FindStringSubmatch(price)
 
@@ -244,7 +242,7 @@ func parsePrice(price string) (float64, error) {
 
 // extractYear extracts the year from a string
 func extractYear(s string) int {
-	// Define a regular expression to match a sequence of digits optionally followed by a decimal point and more digits
+	// regular expression to match a sequence of digits optionally followed by a decimal point and more digits
 	re := regexp.MustCompile(`\d{4}`)
 	matches := re.FindStringSubmatch(s)
 
@@ -322,15 +320,14 @@ func extractModel(s string) string {
 	}
 }
 
-// extractVehicleIdentifier extracts the identifier from the URL string
-func extractVehicleIdentifier(s string) string {
-	// Extract the filename from the URL
-	filename := path.Base(s)
-
-	// Remove the file extension
-	vehicleIdentifier := strings.TrimSuffix(filename, path.Ext(filename))
-
-	return vehicleIdentifier
+// generateHash
+// generates a hashed identifier from one or many string values.
+func generateHash(hashableVals ...string) string {
+	h := fnv.New32a()
+	for _, a := range hashableVals {
+		h.Write([]byte(a))
+	}
+	return fmt.Sprint(h.Sum32())
 }
 
 // createDatabaseHandler connects to PostgreSQL database and returns the handler.
@@ -350,10 +347,43 @@ func createDatabaseHandler() *PSQLHandler {
 	return &PSQLHandler{DB: db}
 }
 
-func (handler *PSQLHandler) Insert(vehicle *models.Vehicle) error {
+func (handler *PSQLHandler) InsertVehicle(vehicle models.Vehicle) error {
 	// TODO: Optimise this.
 	_, err := handler.DB.Exec("INSERT INTO Vehicles (vehicle_type, brand_name, model_name, listing_url, vehicle_id, year) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT ON CONSTRAINT unique_vehicle DO NOTHING;",
 		vehicle.VehicleType, vehicle.Brand, vehicle.Model, vehicle.Url, vehicle.Identifier, vehicle.Year)
+	return err
+}
+
+// InsertParts adds the parts to the database in a batch.
+func (handler *PSQLHandler) InsertParts(parts []models.Part, vehicleIdentifier string) error {
+	// Prepare a transaction
+	tx, err := handler.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	stmt, err := tx.Prepare("INSERT INTO Parts (part_name, description, part_id, vehicle_id, price, img_url, img_thumb_url) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT ON CONSTRAINT unique_part DO NOTHING;")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	// Execute statement to add the parts.
+	for _, part := range parts {
+		_, err := stmt.Exec(part.Name, part.Description, part.PartIdentifier, vehicleIdentifier, part.Price, part.ImgUrl, part.ImgThumbUrl)
+		if err != nil {
+			return err
+		}
+	}
 	return err
 }
 
@@ -367,9 +397,15 @@ func transferVehiclesToDatabase(handler *PSQLHandler, vehicles []models.Vehicle)
 	// Close connection after everything has been sent to database.
 	defer handler.DB.Close()
 	for _, vehicle := range vehicles {
-		err := handler.Insert(&vehicle)
+		err := handler.InsertVehicle(vehicle)
 		if err != nil {
 			log.Fatalf("failed to insert to database %s", err)
 		}
+		log.Printf("Successfully inserted %s to database", vehicle.Name)
+		err = handler.InsertParts(vehicle.Parts, vehicle.Identifier)
+		if err != nil {
+			log.Fatalf("failed to insert parts to database %s", err)
+		}
+		log.Printf("Successfully inserted %d parts for %s to database.", len(vehicle.Parts), vehicle.Name)
 	}
 }
