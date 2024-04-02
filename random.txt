@@ -1,0 +1,26 @@
+CREATE TABLE Parts (
+    part_id VARCHAR(50) PRIMARY KEY,
+    vehicle_id VARCHAR(100) REFERENCES Vehicles(vehicle_id),
+    img_url VARCHAR(255),
+    img_thumb_url VARCHAR(255),
+    part_name VARCHAR(255),
+    description VARCHAR(255),
+    price FLOAT,
+    created_at TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE TABLE Vehicles (
+    vehicle_id VARCHAR(100) PRIMARY KEY,
+    listing_url VARCHAR(100) NOT NULL,
+    brand_name VARCHAR(50) NOT NULL,
+    model_name VARCHAR(50) NOT NULL,
+    year INTEGER NOT NULL,
+    vehicle_type VARCHAR(30),
+    created_at TIMESTAMP DEFAULT current_timestamp
+);
+
+ALTER TABLE Vehicles
+ADD CONSTRAINT unique_vehicle UNIQUE (brand_name, model_name, year);
+
+ALTER TABLE Parts
+ADD CONSTRAINT unique_part UNIQUE (part_id, vehicle_id);

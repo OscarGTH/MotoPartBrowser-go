@@ -1,12 +1,12 @@
 package models
 
 type Part struct {
-	Name           string
-	Description    string
-	PartIdentifier string
-	Price          float64
-	ImgUrl         string
-	ImgThumbUrl    string
+	Name           string  `json:"name"`
+	Description    string  `json:"description"`
+	PartIdentifier string  `json:"id"`
+	Price          float64 `json:"price"`
+	ImgUrl         string  `json:"img_url"`
+	ImgThumbUrl    string  `json:"img_thumb_url"`
 }
 
 type RawPart struct {

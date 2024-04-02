@@ -2,8 +2,9 @@ package main
 
 import (
 	"Crawler/internal/data"
+	"Crawler/internal/database"
+	"Crawler/internal/helpers"
 	"Crawler/internal/models"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -20,22 +21,6 @@ import (
 )
 
 const BrandReMatcher = "^[\\w-]+"
-
-type PSQLHandler struct {
-	DB *sql.DB
-}
-
-// Reads application configuration.
-func readConfig() {
-	log.Println("Reading configuration.")
-	viper.SetConfigName("config") // name of config file (without extension)
-	viper.SetConfigType("yaml")   // REQUIRED if the config file does not have the extension in the name
-	viper.AddConfigPath("./conf") // path to look for the config file in
-	err := viper.ReadInConfig()   // Find and read the config file
-	if err != nil {               // Handle errors reading the config file
-		panic(fmt.Errorf("fatal error config file: %w", err))
-	}
-}
 
 // Instantiates a Colly collector and configures it.
 func createCollector() (*colly.Collector, error) {
@@ -71,10 +56,10 @@ func configureDefaultHandlers(c *colly.Collector) {
 }
 
 func main() {
-	readConfig()
+	helpers.ReadConfig()
 	c, _ := createCollector()
 	configureDefaultHandlers(c)
-	dbHandler := createDatabaseHandler()
+	dbHandler := database.CreateDatabaseHandler()
 
 	var vehicles []models.RawVehicle
 
@@ -330,65 +315,8 @@ func generateHash(hashableVals ...string) string {
 	return fmt.Sprint(h.Sum32())
 }
 
-// createDatabaseHandler connects to PostgreSQL database and returns the handler.
-func createDatabaseHandler() *PSQLHandler {
-	// Connect to the PostgreSQL database
-	db, err := sql.Open("postgres", viper.GetString("database.connection_string"))
-	if err != nil {
-		panic(err)
-	}
-
-	// Verify the connection by pinging the database
-	err = db.Ping()
-	if err != nil {
-		panic(err)
-	}
-	log.Println("Successfully connected to PostgreSQL!")
-	return &PSQLHandler{DB: db}
-}
-
-func (handler *PSQLHandler) InsertVehicle(vehicle models.Vehicle) error {
-	// TODO: Optimise this.
-	_, err := handler.DB.Exec("INSERT INTO Vehicles (vehicle_type, brand_name, model_name, listing_url, vehicle_id, year) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT ON CONSTRAINT unique_vehicle DO NOTHING;",
-		vehicle.VehicleType, vehicle.Brand, vehicle.Model, vehicle.Url, vehicle.Identifier, vehicle.Year)
-	return err
-}
-
-// InsertParts adds the parts to the database in a batch.
-func (handler *PSQLHandler) InsertParts(parts []models.Part, vehicleIdentifier string) error {
-	// Prepare a transaction
-	tx, err := handler.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if p := recover(); p != nil {
-			tx.Rollback()
-			panic(p)
-		} else if err != nil {
-			tx.Rollback()
-		} else {
-			tx.Commit()
-		}
-	}()
-
-	stmt, err := tx.Prepare("INSERT INTO Parts (part_name, description, part_id, vehicle_id, price, img_url, img_thumb_url) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT ON CONSTRAINT unique_part DO NOTHING;")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	// Execute statement to add the parts.
-	for _, part := range parts {
-		_, err := stmt.Exec(part.Name, part.Description, part.PartIdentifier, vehicleIdentifier, part.Price, part.ImgUrl, part.ImgThumbUrl)
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
 // transferVehiclesToDatabase writes the contents of the parsed vehicles and their parts there.
-func transferVehiclesToDatabase(handler *PSQLHandler, vehicles []models.Vehicle) {
+func transferVehiclesToDatabase(handler *database.PSQLHandler, vehicles []models.Vehicle) {
 	// Verify the connection by pinging the database
 	err := handler.DB.Ping()
 	if err != nil {

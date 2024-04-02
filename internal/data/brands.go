@@ -29,6 +29,8 @@ var Brands = []string{
 	"Kymco",
 	"Keeway",
 	"Malaguti",
+	"CHRacing",
+	"Polini",
 	"Kawasaki",
 	"Masai",
 	"Motorhispania",
