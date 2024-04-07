@@ -5,3 +5,4 @@
     snowmobile: <LINK TO SNOWMOBILE LIST>
   database:
     connection_string: 
+  loadFromJSON: false

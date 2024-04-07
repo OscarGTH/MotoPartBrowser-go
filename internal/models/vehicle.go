@@ -2,13 +2,13 @@ package models
 
 type Vehicle struct {
 	Name        string `json:"-"`
-	Brand       string `json:"brand_name"`
-	Model       string `json:"model_name"`
-	VehicleType string `json:"vehicleType"`
-	Identifier  string `json:"vehicleId"`
-	Year        int    `json:"year"`
-	Url         string `json:"url"`
-	Parts       []Part `json:"parts"`
+	Brand       string `json:"Brand"`
+	Model       string `json:"Model"`
+	VehicleType string `json:"VehicleType"`
+	Identifier  string `json:"Identifier"`
+	Year        int    `json:"Year"`
+	Url         string `json:"Url"`
+	Parts       []Part `json:"Parts"`
 }
 
 type RawVehicle struct {

@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,7 +60,6 @@ func main() {
 	helpers.ReadConfig()
 	c, _ := createCollector()
 	configureDefaultHandlers(c)
-	dbHandler := database.CreateDatabaseHandler()
 
 	var vehicles []models.RawVehicle
 
@@ -119,43 +119,79 @@ func main() {
 
 	// Iterate over the vehicle categories.
 	for category, listingPageUrl := range categories {
+		var processedVehicles []models.Vehicle
 		// Emptying vehicles slice when switching categories.
 		vehicles = nil
-		fName := "./output/" + category + "_data.json"
-		file, err := os.Create(fName)
-		if err != nil {
-			log.Fatalf("Cannot create file %q: %s\n", fName, err)
-			return
-		}
-		defer func(file *os.File) {
-			err := file.Close()
+		if viper.GetBool("loadFromJSON") {
+			log.Println("Loading vehicles from JSON.")
+			// Get the absolute path of the JSON file
+			absJSONFilePath, err := filepath.Abs("./output/" + category + "_data.json")
 			if err != nil {
-				log.Fatalf("Cannot close the file. Reason: %s\n", err)
+				log.Fatal(err)
+			}
+
+			// Read vehicles from the JSON file
+			processedVehicles, err = ReadVehiclesFromJSONFile(absJSONFilePath)
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			fName := "./output/" + category + "_data.json"
+			file, err := os.Create(fName)
+			if err != nil {
+				log.Fatalf("Cannot create file %q: %s\n", fName, err)
 				return
 			}
-		}(file)
+			defer func(file *os.File) {
+				err := file.Close()
+				if err != nil {
+					log.Fatalf("Cannot close the file. Reason: %s\n", err)
+					return
+				}
+			}(file)
 
-		err = c.Visit(listingPageUrl)
-		if err != nil {
-			log.Fatalf("Cannot visit the page %s. Reason: %s\n", listingPageUrl, err)
-			return
+			err = c.Visit(listingPageUrl)
+			if err != nil {
+				log.Fatalf("Cannot visit the page %s. Reason: %s\n", listingPageUrl, err)
+				return
+			}
+
+			// Wait until all threads have finished.
+			c.Wait()
+
+			enc := json.NewEncoder(file)
+			enc.SetIndent("", "  ")
+
+			// Convert raw vehicles to vehicles
+			processedVehicles := convertRawVehiclesToVehicles(vehicles, category)
+			// Dump json to the standard output
+			enc.Encode(processedVehicles)
+			log.Printf("Successfully dumped json to the file %s.", file.Name())
 		}
-
-		// Wait until all threads have finished.
-		c.Wait()
-
-		enc := json.NewEncoder(file)
-		enc.SetIndent("", "  ")
-
-		// Convert raw vehicles to vehicles
-		processedVehicles := convertRawVehiclesToVehicles(vehicles, category)
-		// Dump json to the standard output
-		enc.Encode(processedVehicles)
-		log.Printf("Successfully dumped json to the file %s.", file.Name())
-
-		// Write the vehicles and parts to the database.
+		log.Println("Connecting to database.")
+		dbHandler := database.CreateDatabaseHandler()
+		log.Println("Transfering vehicles to database.")
 		transferVehiclesToDatabase(dbHandler, processedVehicles)
 	}
+}
+
+// ReadVehiclesFromJSONFile reads vehicles from a JSON file and returns a slice of vehicles
+func ReadVehiclesFromJSONFile(filePath string) ([]models.Vehicle, error) {
+	// Read the JSON file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Decode the JSON data into a slice of vehicles
+	var vehicles []models.Vehicle
+	err = json.NewDecoder(file).Decode(&vehicles)
+	if err != nil {
+		return nil, err
+	}
+
+	return vehicles, nil
 }
 
 // convertRawVehiclesToVehicles converts raw vehicle data to processed vehicle data
