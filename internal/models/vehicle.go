@@ -8,7 +8,7 @@ type Vehicle struct {
 	Identifier  string `json:"vehicleId"`
 	Year        int    `json:"year"`
 	Url         string `json:"url"`
-	Parts       []Part `json:"-"`
+	Parts       []Part `json:"parts"`
 }
 
 type RawVehicle struct {

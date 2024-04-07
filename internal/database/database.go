@@ -69,6 +69,15 @@ func (handler *PSQLHandler) InsertParts(parts []models.Part, vehicleIdentifier s
 	return err
 }
 
+func (handler *PSQLHandler) GetVehicleCount() (int, error) {
+	count := 0
+	err := handler.DB.QueryRow("SELECT COUNT(vehicle_id) FROM Vehicles;").Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (handler *PSQLHandler) GetBrands(vehicleType string) ([]string, error) {
 	rows, err := handler.DB.Query("SELECT DISTINCT(brand_name) FROM Vehicles WHERE vehicle_type = $1 ORDER BY brand_name ASC;", vehicleType)
 	if err != nil {
@@ -156,20 +165,110 @@ func (handler *PSQLHandler) GetVehiclesForType(vehicleType string) ([]models.Veh
 	return vehicles, nil
 }
 
-func (handler *PSQLHandler) GetPartsForVehicle(vehicleIdentifier string) ([]models.Part, error) {
-	rows, err := handler.DB.Query("SELECT part_name, description, part_id, price, img_url, img_thumb_url FROM Parts WHERE vehicle_id = $1 ORDER BY part_name ASC;", vehicleIdentifier)
+func (handler *PSQLHandler) GetVehiclesForModel(vehicleType string, brandName string, modelName string) ([]models.Vehicle, error) {
+	rows, err := handler.DB.Query("SELECT vehicle_id, brand_name, model_name, vehicle_type, year, listing_url FROM Vehicles WHERE vehicle_type = $1 AND brand_name = $2 AND model_name = $3 ORDER BY year ASC;", vehicleType, brandName, modelName)
 	if err != nil {
-		log.Printf("error while getting parts for vehicles: %v", err)
+		log.Printf("error while getting vehicles for model: %v", err)
 		return nil, err
 	}
-	var parts []models.Part
+	defer rows.Close()
+	var vehicles []models.Vehicle
+	for rows.Next() {
+		var vehicle models.Vehicle
+		err = rows.Scan(&vehicle.Identifier, &vehicle.Brand, &vehicle.Model, &vehicle.VehicleType, &vehicle.Year, &vehicle.Url)
+		if err != nil {
+			return nil, err
+		}
+		vehicles = append(vehicles, vehicle)
+	}
+	return vehicles, nil
+}
+
+func (handler *PSQLHandler) GetPartsForVehicle(vehicleIdentifier string) (models.Vehicle, error) {
+	rows, err := handler.DB.Query("SELECT V.vehicle_id, V.year, V.model_name, V.brand_name, P.part_name, P.description, P.part_id, P.price, P.img_url, P.img_thumb_url FROM Vehicles V INNER JOIN Parts P ON V.vehicle_id = P.vehicle_id WHERE V.vehicle_id = $1 ORDER BY P.part_name ASC;", vehicleIdentifier)
+	var vehicle models.Vehicle
+	if err != nil {
+		log.Printf("error while getting parts for a vehicle: %v", err)
+		return vehicle, err
+	}
+	defer rows.Close()
+
+	vehicle.Parts = []models.Part{}
 	for rows.Next() {
 		var part models.Part
-		err = rows.Scan(&part.Name, &part.Description, &part.PartIdentifier, &part.Price, &part.ImgUrl, &part.ImgThumbUrl)
+		err := rows.Scan(
+			&vehicle.Identifier,
+			&vehicle.Year,
+			&vehicle.Model,
+			&vehicle.Brand,
+			&part.Name,
+			&part.Description,
+			&part.PartIdentifier,
+			&part.Price,
+			&part.ImgUrl,
+			&part.ImgThumbUrl,
+		)
 		if err != nil {
-			log.Printf("error while scanning rows: %v", err)
+			log.Printf("error while scanning database response for parts for a vehicle: %v", err)
+			return models.Vehicle{}, err
 		}
-		parts = append(parts, part)
+		vehicle.Parts = append(vehicle.Parts, part)
 	}
-	return parts, nil
+	return vehicle, nil
+}
+
+func (handler *PSQLHandler) GetPartsForModel(vehicleType string, brandName string, modelName string) ([]models.Vehicle, error) {
+	rows, err := handler.DB.Query("SELECT V.vehicle_id, V.year, V.model_name, V.brand_name, P.part_name, P.description, P.part_id, P.price, P.img_url, P.img_thumb_url FROM Vehicles V INNER JOIN Parts P ON V.vehicle_id = P.vehicle_id WHERE V.vehicle_type = $1 AND V.brand_name = $2 AND V.model_name = $3 ORDER BY V.year ASC;", vehicleType, brandName, modelName)
+	if err != nil {
+		log.Printf("error while getting parts for model: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	vehicleMap := make(map[string]models.Vehicle)
+	for rows.Next() {
+		var vehicleID string
+		var vehicle models.Vehicle
+		var part models.Part
+		err = rows.Scan(&vehicleID,
+			&vehicle.Year,
+			&vehicle.Model,
+			&vehicle.Brand,
+			&part.Name,
+			&part.Description,
+			&part.PartIdentifier,
+			&part.Price,
+			&part.ImgUrl,
+			&part.ImgThumbUrl,
+		)
+		if err != nil {
+			log.Printf("error while scanning database response for parts for model: %v", err)
+			return nil, err
+		}
+
+		// Check if a vehicle with the current vehicleID already exists in the vehicleMap
+		existingVehicle, exists := vehicleMap[vehicleID]
+		if exists {
+			// Append the part to the existing vehicle's Parts slice
+			existingVehicle.Parts = append(existingVehicle.Parts, part)
+			// Update the vehicleMap with the modified vehicle
+			vehicleMap[vehicleID] = existingVehicle
+		} else {
+			// Create a new vehicle object
+			vehicle.Identifier = vehicleID
+			// Initialize the Parts slice of the new vehicle with the current part
+			vehicle.Parts = []models.Part{part}
+			// Add the new vehicle to the vehicleMap
+			vehicleMap[vehicleID] = vehicle
+		}
+
+	}
+
+	// Convert the map to a slice
+	vehicles := make([]models.Vehicle, 0, len(vehicleMap))
+	for _, value := range vehicleMap {
+		vehicles = append(vehicles, value)
+	}
+
+	return vehicles, nil
 }

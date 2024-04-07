@@ -1,5 +1,10 @@
 package models
 
+type VehicleAndPart struct {
+	Part    Part    `json:"part"`
+	Vehicle Vehicle `json:"vehicle"`
+}
+
 type Part struct {
 	Name           string  `json:"name"`
 	Description    string  `json:"description"`
