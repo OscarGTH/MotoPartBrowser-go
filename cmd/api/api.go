@@ -23,13 +23,17 @@ func (a *App) Initialize() {
 }
 
 func (a *App) Run(addr string) {
+	a.Router.HandleFunc("/vehicles", a.VehicleCountHandler).Methods("GET")
 	a.Router.HandleFunc("/vehicles/types", a.VehicleTypesHandler).Methods("GET")
 	a.Router.HandleFunc("/vehicles/types/{vehicleType}", a.VehiclesWithTypeHandler).Methods("GET")
-	a.Router.HandleFunc("/vehicles/types/{vehicleType}/brands", a.BrandsWithTypeHandler).Methods("GET")
-	a.Router.HandleFunc("/vehicles/types/{vehicleType}/brands/{brand}/models", a.ModelsForBrandHandler).Methods("GET")
 	a.Router.HandleFunc("/vehicles/types/{vehicleType}/{vehicleId}", a.VehicleHandler).Methods("GET")
 	a.Router.HandleFunc("/vehicles/types/{vehicleType}/{vehicleId}/parts", a.PartHandler).Methods("GET")
+	a.Router.HandleFunc("/vehicles/types/{vehicleType}/brands", a.BrandsWithTypeHandler).Methods("GET")
+	a.Router.HandleFunc("/vehicles/types/{vehicleType}/brands/{brandName}/models", a.ModelsForBrandHandler).Methods("GET")
+	a.Router.HandleFunc("/vehicles/types/{vehicleType}/brands/{brandName}/models/{modelName}", a.VehiclesForModelHandler).Methods("GET")
+	a.Router.HandleFunc("/vehicles/types/{vehicleType}/brands/{brandName}/models/{modelName}/parts", a.PartsForModelHandler).Methods("GET")
 	http.Handle("/", a.Router)
+	a.Router.Use(contentTypeApplicationJsonMiddleware)
 
 	srv := &http.Server{
 		Handler:      a.Router,
@@ -41,10 +45,33 @@ func (a *App) Run(addr string) {
 	log.Fatal(srv.ListenAndServe())
 }
 
+func contentTypeApplicationJsonMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *App) VehicleCountHandler(w http.ResponseWriter, r *http.Request) {
+	count, err := a.DBHandler.GetVehicleCount()
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	payload, err := json.Marshal(count)
+	if err != nil {
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	w.Write(payload)
+}
+
 func (a *App) VehicleHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	vehicle, err := a.DBHandler.GetVehicle(vars["vehicleType"], vars["vehicleId"])
-	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -53,7 +80,9 @@ func (a *App) VehicleHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	payload, err := json.Marshal(vehicle)
 	if err != nil {
-		log.Println(err)
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
 	}
 	w.Write(payload)
 }
@@ -61,7 +90,6 @@ func (a *App) VehicleHandler(w http.ResponseWriter, r *http.Request) {
 func (a *App) PartHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	parts, err := a.DBHandler.GetPartsForVehicle(vars["vehicleId"])
-	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -70,14 +98,15 @@ func (a *App) PartHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	payload, err := json.Marshal(parts)
 	if err != nil {
-		log.Println(err)
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
 	}
 	w.Write(payload)
 }
 
 func (a *App) BrandsWithTypeHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	w.Header().Set("Content-Type", "application/json")
 	brands, err := a.DBHandler.GetBrands(vars["vehicleType"])
 	if err != nil {
 		log.Println(err)
@@ -85,26 +114,34 @@ func (a *App) BrandsWithTypeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload, err := json.Marshal(brands)
+	if err != nil {
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
 	w.Write(payload)
 
 }
 
 func (a *App) ModelsForBrandHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	w.Header().Set("Content-Type", "application/json")
-	brands, err := a.DBHandler.GetModelsForBrand(vars["vehicleType"], vars["brand"])
+	brands, err := a.DBHandler.GetModelsForBrand(vars["vehicleType"], vars["brandName"])
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	payload, err := json.Marshal(brands)
+	if err != nil {
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
 	w.Write(payload)
 }
 
 func (a *App) VehiclesWithTypeHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	w.Header().Set("Content-Type", "application/json")
 	vehicles, err := a.DBHandler.GetVehiclesForType(vars["vehicleType"])
 	if err != nil {
 		log.Println(err)
@@ -113,11 +150,15 @@ func (a *App) VehiclesWithTypeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	payload, err := json.Marshal(vehicles)
+	if err != nil {
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
 	w.Write(payload)
 }
 
 func (a *App) VehicleTypesHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	types, err := a.DBHandler.GetVehicleTypes()
 	if err != nil {
 		log.Println(err)
@@ -126,5 +167,44 @@ func (a *App) VehicleTypesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	payload, err := json.Marshal(types)
+	if err != nil {
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	w.Write(payload)
+}
+
+func (a *App) PartsForModelHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	parts, err := a.DBHandler.GetPartsForModel(vars["vehicleType"], vars["brandName"], vars["modelName"])
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	payload, err := json.Marshal(parts)
+	if err != nil {
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	w.Write(payload)
+}
+
+func (a *App) VehiclesForModelHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	vehicles, err := a.DBHandler.GetVehiclesForModel(vars["vehicleType"], vars["brandName"], vars["modelName"])
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	payload, err := json.Marshal(vehicles)
+	if err != nil {
+		log.Printf("Cannot unmarshal: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
 	w.Write(payload)
 }
