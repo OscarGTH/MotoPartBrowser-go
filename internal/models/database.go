@@ -2,8 +2,8 @@ package models
 
 // DatabaseHandler defines the methods for interacting with the database
 type DatabaseHandler interface {
-	InsertVehicle(vehicles Vehicle) error
-	InsertPart(parts []Part, vehicleId string) error
+	InsertVehicles(vehicles []Vehicle) error
+	InsertParts(vehicles []Vehicle) error
 	GetVehicleCount() (int, error)
 	GetVehicleTypes() ([]string, error)
 	GetVehiclesForType(vehicleType string) ([]Vehicle, error)

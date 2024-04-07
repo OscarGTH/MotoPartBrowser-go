@@ -324,16 +324,13 @@ func transferVehiclesToDatabase(handler *database.PSQLHandler, vehicles []models
 	}
 	// Close connection after everything has been sent to database.
 	defer handler.DB.Close()
-	for _, vehicle := range vehicles {
-		err := handler.InsertVehicle(vehicle)
-		if err != nil {
-			log.Fatalf("failed to insert to database %s", err)
-		}
-		log.Printf("Successfully inserted %s to database", vehicle.Name)
-		err = handler.InsertParts(vehicle.Parts, vehicle.Identifier)
-		if err != nil {
-			log.Fatalf("failed to insert parts to database %s", err)
-		}
-		log.Printf("Successfully inserted %d parts for %s to database.", len(vehicle.Parts), vehicle.Name)
+	err = handler.InsertVehicles(vehicles)
+	if err != nil {
+		panic(err)
+	}
+	log.Printf("successfully inserted %d vehicles into database", len(vehicles))
+	err = handler.InsertParts(vehicles)
+	if err != nil {
+		log.Fatalf("failed to insert parts to database %s", err)
 	}
 }

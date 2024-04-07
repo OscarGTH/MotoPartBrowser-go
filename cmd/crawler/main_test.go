@@ -63,6 +63,7 @@ func Test_extractModel(t *testing.T) {
 		{"Test model with brand", args{"Suzuki RX"}, "RX"},
 		{"Test model with brand and year", args{"Suzuki RX 2019"}, "RX"},
 		{"Test model with spaces and with brand and year", args{"Suzuki RX 3 2019"}, "RX 3"},
+		{"Test model with spaces and with brand and year 2nd", args{"Polini XP4 50 2007"}, "XP4 50"},
 		{"Test model with spaces and with brand and year and other numbers", args{"Suzuki RX 3 2019 203"}, "RX 3"},
 		{"Test model with dashes in model name", args{"Suzuki RX-3 2019"}, "RX-3"},
 	}

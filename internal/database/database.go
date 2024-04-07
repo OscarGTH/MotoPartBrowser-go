@@ -3,8 +3,10 @@ package database
 import (
 	"Crawler/internal/models"
 	"database/sql"
+	"errors"
 	"log"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/viper"
 )
 
@@ -29,15 +31,66 @@ func CreateDatabaseHandler() *PSQLHandler {
 	return &PSQLHandler{DB: db}
 }
 
-func (handler *PSQLHandler) InsertVehicle(vehicle models.Vehicle) error {
-	// TODO: Optimise this.
-	_, err := handler.DB.Exec("INSERT INTO Vehicles (vehicle_type, brand_name, model_name, listing_url, vehicle_id, year) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT ON CONSTRAINT unique_vehicle DO NOTHING;",
-		vehicle.VehicleType, vehicle.Brand, vehicle.Model, vehicle.Url, vehicle.Identifier, vehicle.Year)
-	return err
+func hasDuplicateVehicleIDs(vehicles []models.Vehicle) bool {
+	// Create a map to store seen vehicle identifiers
+	seen := make(map[string]bool)
+
+	// Iterate over the vehicles
+	for _, vehicle := range vehicles {
+		// Check if the current vehicle identifier has been seen before
+		if seen[vehicle.Identifier] {
+			log.Println(vehicle.Name)
+			return true // Duplicate vehicle identifier found
+		}
+		// Mark the current vehicle identifier as seen
+		seen[vehicle.Identifier] = true
+	}
+
+	// No duplicate vehicle identifiers found
+	return false
+}
+
+func (handler *PSQLHandler) InsertVehicles(vehicles []models.Vehicle) error {
+	duplicates := hasDuplicateVehicleIDs(vehicles)
+	if duplicates {
+		return errors.New("duplicate id found")
+	}
+	tx, err := handler.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+			if err != nil {
+				log.Printf("error while committing transaction: %v", err)
+			}
+		}
+	}()
+
+	stmt, err := tx.Prepare("INSERT INTO Vehicles (vehicle_type, brand_name, model_name, listing_url, vehicle_id, year) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING;")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	bar := progressbar.Default(int64(len(vehicles)))
+	for _, vehicle := range vehicles {
+		_, err := stmt.Exec(vehicle.VehicleType, vehicle.Brand, vehicle.Model, vehicle.Url, vehicle.Identifier, vehicle.Year)
+		if err != nil {
+			return err
+		}
+		bar.Add(1)
+	}
+	return nil
 }
 
 // InsertParts adds the parts to the database in a batch.
-func (handler *PSQLHandler) InsertParts(parts []models.Part, vehicleIdentifier string) error {
+func (handler *PSQLHandler) InsertParts(vehicles []models.Vehicle) error {
 	// Prepare a transaction
 	tx, err := handler.DB.Begin()
 	if err != nil {
@@ -50,23 +103,36 @@ func (handler *PSQLHandler) InsertParts(parts []models.Part, vehicleIdentifier s
 		} else if err != nil {
 			tx.Rollback()
 		} else {
-			tx.Commit()
+			err = tx.Commit()
+			if err != nil {
+				log.Printf("error while committing transaction: %v", err)
+			}
 		}
 	}()
 
-	stmt, err := tx.Prepare("INSERT INTO Parts (part_name, description, part_id, vehicle_id, price, img_url, img_thumb_url) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT ON CONSTRAINT unique_part DO NOTHING;")
+	stmt, err := tx.Prepare("INSERT INTO Parts (part_name, description, part_id, vehicle_id, price, img_url, img_thumb_url) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING;")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	// Execute statement to add the parts.
-	for _, part := range parts {
-		_, err := stmt.Exec(part.Name, part.Description, part.PartIdentifier, vehicleIdentifier, part.Price, part.ImgUrl, part.ImgThumbUrl)
-		if err != nil {
-			return err
+	var totalPartCount int
+	// Get total part count for progress bar.
+	for _, vehicle := range vehicles {
+		totalPartCount += len(vehicle.Parts)
+	}
+	bar := progressbar.Default(int64(totalPartCount))
+
+	for _, vehicle := range vehicles {
+		vehicleId := vehicle.Identifier
+		for _, part := range vehicle.Parts {
+			_, err := stmt.Exec(part.Name, part.Description, part.PartIdentifier, vehicleId, part.Price, part.ImgUrl, part.ImgThumbUrl)
+			if err != nil {
+				return err
+			}
+			bar.Add(1)
 		}
 	}
-	return err
+	return nil
 }
 
 func (handler *PSQLHandler) GetVehicleCount() (int, error) {
